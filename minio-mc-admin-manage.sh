@@ -92,37 +92,45 @@ attach_policy() {
     echo "[+] Policy '$POLICYNAME' attached to user '$USERNAME'."
 }
 
-# Fungsi: Delete policy (with auto-detach if in use)
+# Fungsi: Delete policy
 delete_policy() {
     read -p "Enter policy name to delete: " POLICYNAME
-
-    # Cari user yang memakai policy ini
     echo "[*] Checking if policy '$POLICYNAME' is in use..."
-    USERS_IN_USE=$(mc admin user list "$MINIO_ALIAS" | awk '{print $1}' | while read -r USER; do
-        INFO=$(mc admin user info "$MINIO_ALIAS" "$USER" 2>/dev/null)
-        if echo "$INFO" | grep -q "Policy name.*$POLICYNAME"; then
-            echo "$USER"
-        fi
-    done)
 
-    if [ -n "$USERS_IN_USE" ]; then
-        echo "[!] Policy '$POLICYNAME' is currently used by the following users:"
-        echo "$USERS_IN_USE"
-        read -p "Do you want to detach the policy from these users before deleting? (y/n): " CONFIRM
+    USERS=$(mc admin user list "$MINIO_ALIAS" | awk '{print $1}')
+    IN_USE_USERS=()
+
+    for USER in $USERS; do
+        ATTACHED_POLICY=$(mc admin policy info "$MINIO_ALIAS" --user "$USER" 2>/dev/null | grep -o "$POLICYNAME")
+        if [[ "$ATTACHED_POLICY" == "$POLICYNAME" ]]; then
+            IN_USE_USERS+=("$USER")
+        fi
+    done
+
+    if [[ ${#IN_USE_USERS[@]} -gt 0 ]]; then
+        echo "[!] Policy '$POLICYNAME' is in use by the following users:"
+        for U in "${IN_USE_USERS[@]}"; do
+            echo "  - $U"
+        done
+
+        read -p "Do you want to detach this policy from all users? [y/N]: " CONFIRM
         if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
-            echo "[*] Detaching policy from users..."
-            for USER in $USERS_IN_USE; do
-                mc admin policy detach "$MINIO_ALIAS" --user "$USER" "$POLICYNAME"
-                echo "[-] Detached from '$USER'"
+            for U in "${IN_USE_USERS[@]}"; do
+                mc admin policy detach "$MINIO_ALIAS" --user "$U" "$POLICYNAME"
+                echo "[*] Detached policy '$POLICYNAME' from user '$U'."
             done
         else
-            echo "[!] Aborted policy deletion."
+            echo "[!] Policy delete cancelled."
             return
         fi
     fi
 
     mc admin policy remove "$MINIO_ALIAS" "$POLICYNAME"
-    echo "[+] Policy '$POLICYNAME' deleted."
+    if [[ $? -eq 0 ]]; then
+        echo "[+] Policy '$POLICYNAME' deleted."
+    else
+        echo "[!] Failed to delete policy '$POLICYNAME'."
+    fi
 }
 
 # Fungsi: List all policies
@@ -160,14 +168,13 @@ while true; do
     echo "5. List users"
     echo "6. Create policy for bucket access"
     echo "7. Attach policy to user"
-    echo "8. Delete policy (with auto-detach if in use)"
+    echo "8. Delete policy"
     echo "9. List policies"
     echo "10. Create bucket if not exists"
     echo "0. Exit"
     echo "========================================"
     read -p "Select an option: " OPTION
 
-    # Pastikan alias diatur sebelum aksi kecuali opsi 1 dan 2
     if [[ "$OPTION" =~ ^[3-9]|10$ ]]; then
         check_alias
     fi
@@ -186,5 +193,4 @@ while true; do
         0) echo "Goodbye!"; exit 0 ;;
         *) echo "[!] Invalid option." ;;
     esac
-
 done
