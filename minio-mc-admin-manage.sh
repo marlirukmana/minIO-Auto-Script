@@ -92,9 +92,35 @@ attach_policy() {
     echo "[+] Policy '$POLICYNAME' attached to user '$USERNAME'."
 }
 
-# Fungsi: Delete policy
+# Fungsi: Delete policy (with auto-detach if in use)
 delete_policy() {
     read -p "Enter policy name to delete: " POLICYNAME
+
+    # Cari user yang memakai policy ini
+    echo "[*] Checking if policy '$POLICYNAME' is in use..."
+    USERS_IN_USE=$(mc admin user list "$MINIO_ALIAS" | awk '{print $1}' | while read -r USER; do
+        INFO=$(mc admin user info "$MINIO_ALIAS" "$USER" 2>/dev/null)
+        if echo "$INFO" | grep -q "Policy name.*$POLICYNAME"; then
+            echo "$USER"
+        fi
+    done)
+
+    if [ -n "$USERS_IN_USE" ]; then
+        echo "[!] Policy '$POLICYNAME' is currently used by the following users:"
+        echo "$USERS_IN_USE"
+        read -p "Do you want to detach the policy from these users before deleting? (y/n): " CONFIRM
+        if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+            echo "[*] Detaching policy from users..."
+            for USER in $USERS_IN_USE; do
+                mc admin policy detach "$MINIO_ALIAS" --user "$USER" "$POLICYNAME"
+                echo "[-] Detached from '$USER'"
+            done
+        else
+            echo "[!] Aborted policy deletion."
+            return
+        fi
+    fi
+
     mc admin policy remove "$MINIO_ALIAS" "$POLICYNAME"
     echo "[+] Policy '$POLICYNAME' deleted."
 }
@@ -134,7 +160,7 @@ while true; do
     echo "5. List users"
     echo "6. Create policy for bucket access"
     echo "7. Attach policy to user"
-    echo "8. Delete policy"
+    echo "8. Delete policy (with auto-detach if in use)"
     echo "9. List policies"
     echo "10. Create bucket if not exists"
     echo "0. Exit"
@@ -160,4 +186,5 @@ while true; do
         0) echo "Goodbye!"; exit 0 ;;
         *) echo "[!] Invalid option." ;;
     esac
+
 done
